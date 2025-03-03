@@ -67,7 +67,9 @@ class Head(nn.Module):
         super().__init__()
         # YOUR CODE
         # add you key, query and value definitions
-
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
         ###
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
 
@@ -76,10 +78,20 @@ class Head(nn.Module):
     def forward(self, x):
         B,T,C = x.shape
         ## YOUR CODE HERE
-
+        k =  self.key(x) # (B, T, head_size)
+        q =  self.query(x) # (B, T, head_size)
+        v =  self.value(x) # (B, T, head_size)
+        # compute the normalize product between Q and K 
+        weight =  q @ k.transpose(-2, -1) * C ** -0.5 # (B, T, head_size) @ (B, 16, head_size) -> (B, T, T)
+        # apply the mask (lower triangular matrix)
+        weight = weight.masked_fill(self.tril[:T, :T]== 0, float('-inf'))
+        # apply the softmax
+        weight = torch.softmax(weight, dim=-1)
         ###
         out = weight @ v # (B, T, T) @ (B, T, C) -> (B, T, C)
         return out
+
+
 
 
 class BigramLanguageModel(nn.Module):
