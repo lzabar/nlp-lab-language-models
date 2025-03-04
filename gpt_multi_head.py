@@ -12,7 +12,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters = 200
 n_embd = 32
 n_head = 4
-
+dropout = 0.2
 
 # ------------
 
@@ -70,7 +70,7 @@ class Head(nn.Module):
         self.key = nn.Linear(n_embd, head_size, bias=False)
         self.query = nn.Linear(n_embd, head_size, bias=False)
         self.value = nn.Linear(n_embd, head_size, bias=False)
-        ###
+        self.dropout = nn.Dropout(dropout)
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
 
     def forward(self, x):
@@ -81,9 +81,10 @@ class Head(nn.Module):
         # compute the normalize product between Q and K 
         weight =  q @ k.transpose(-2, -1) * C ** -0.5 # (B, T, head_size) @ (B, 16, head_size) -> (B, T, T)
         # apply the mask (lower triangular matrix)
-        weight = weight.masked_fill(self.tril[:T, :T]== 0, float('-inf'))
+        weight = weight.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
         # apply the softmax
         weight = torch.softmax(weight, dim=-1)
+        weight = self.dropout(weight)
         ###
         out = weight @ v # (B, T, T) @ (B, T, C) -> (B, T, C)
         return out
@@ -95,8 +96,10 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         ## list of num_heads modules of type Head
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
+        ## YOUR CODE HERE
         ## apply each head in self.heads to x and concat the results 
         out = torch.cat([h(x) for h in self.heads], dim=-1)
 
@@ -110,6 +113,7 @@ class FeedForward(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(n_embd, n_embd),
             nn.ReLU(),
+            nn.Dropout(dropout),
         )
 
     def forward(self, x):
@@ -123,10 +127,12 @@ class Block(nn.Module):
         head_size = n_embd // n_head
         self.sa = MultiHeadAttention(n_head, head_size)
         self.ffwd = FeedForward(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd) 
+        self.ln2 = nn.LayerNorm(n_embd)
 
     def forward(self, x):
-        x = self.sa(x)
-        x = self.ffwd(x)
+        x = x + self.sa(self.ln1(x))
+        x = x + self.ffwd(self.ln2(x))
         return x
 
 class BigramLanguageModel(nn.Module):
@@ -138,7 +144,8 @@ class BigramLanguageModel(nn.Module):
         #head_size = n_embd // n_head
         #self.sa_head = MultiHeadAttention(n_head, head_size)
         #self.ffwd = FeedForward(n_embd)
-        self.blocks = nn.Sequential(Block(n_embd, n_head), Block(n_embd, n_head), Block(n_embd, n_head))
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head) for _ in range(3)])
+        self.ln_f = nn.LayerNorm(n_embd)
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx, targets=None):
@@ -151,6 +158,7 @@ class BigramLanguageModel(nn.Module):
         #x = self.sa_head(x) # (B,T,C)
         #x = self.ffwd(x)
         x = self.blocks(x)
+        x = self.ln_f(x)
         logits = self.lm_head(x) # (B,T,vocab_size)
 
         if targets is None:
